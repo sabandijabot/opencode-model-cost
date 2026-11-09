@@ -1,29 +1,41 @@
 # opencode-model-cost
 
-Selector de modelos para OpenCode V2 que **muestra cuánto cuesta cada modelo**
-antes de cambiar. Como el selector `/model` nativo, pero con los precios
-visibles para no gastar de más por accidente.
+Selector de modelos para OpenCode V2 que **muestra cuánto cuesta cada modelo
+y los ordena de más barato a más caro**. Como el selector `/model` nativo, pero
+con los precios visibles para no gastar de más por accidente.
 
 ## Qué hace
 
 **Comando `/tcolas`** (aliases: `/precios`, `/modelcost`): abre el diálogo de
-selección de modelos agrupado por provider, y cada opción muestra su precio por
-millón de tokens:
+selección de modelos **ordenado por costo efectivo** (más económico arriba,
+más caro abajo) y agrupado por nivel de precio:
 
 ```
-in $3 · out $15 · cache $0.30/$3.75 · ctx 200k
-GRATIS · ctx 1M
+GRATIS · Económico · Medio · Caro · Sin precios
 ```
 
+Cada fila muestra un estimado abreviado (los detalles completos van en el toast
+al elegir):
+
+```
+≈$2.37/Mtok · ≈$0.26/ses
+```
+
+- **Costo efectivo**: mezcla ponderada según uso real de agente
+  (~10:1 entrada vs salida, ~70% de la entrada cacheada), no el precio de
+  lista de salida. Incluye el estimado por sesión típica (≈110k tokens).
+- La búsqueda propio reordena resultados por costo: los más baratos arriba.
 - Al elegir un modelo lo aplica a la sesión abierta (`client.session.switchModel`),
-  conservando la variante si es el mismo modelo de antes.
+  conservando la variante si es el mismo modelo de antes. El toast confirma el
+  cambio con el precio completo (`in/out/cch`, $/sesión) y el puesto en el
+  ranking (ej. *puesto 3 de 42 por precio*).
 - Si no hay sesión abierta, muestra los precios del modelo elegido en un toast.
 - Si un modelo tiene precios por tramos de contexto (`cost: Model.Cost[]`),
   elige el tramo que aplica según el límite de contexto del modelo.
 
-**Widget en el footer** (`⚡ $2 in / $10 out`): el precio del modelo actualmente
-seleccionado, visible de forma permanente en `home` y `prompt`. Modelos gratis
-se muestran como `GRATIS`.
+**Widget en el footer** (`⚡ ≈$/Mtok`): el costo efectivo del modelo
+actualmente seleccionado, visible de forma permanente en `home` y `prompt`.
+Modelos gratis se muestran como `GRATIS`.
 
 ## Instalación
 
@@ -32,7 +44,7 @@ Copia la carpeta a tu config global de OpenCode y registra el plugin:
 ```text
 .config/opencode/plugins/model-cost/
 ├── index.ts   (parte servidor: no-op, requerido por la estructura de plugins)
-└── tui.tsx    (comando /tcolas + widget de precios)
+└── tui.tsx    (comando /tcolas + widget de costo efectivo)
 ```
 
 ```jsonc title="~/.config/opencode/opencode.jsonc"
