@@ -1,8 +1,9 @@
 // model-cost / tui — selector de modelos con precios visibles
 //
 // Comando /tcolas (alias /precios): abre el mismo tipo de diálogo que /model,
-// pero cada opción muestra lo que cuesta por millón de tokens:
-//   in $3 · out $15 · cache $0.30/$3.75 · ctx 200k
+// ordenado por costo efectivo (más económico arriba, más caro abajo) y agrupado
+// por nivel: GRATIS · Económico · Medio · Caro · Sin precios. Cada fila muestra:
+//   ≈$2.37/Mtok · ≈$0.26/ses   (corto para que no se corte; detalles en el toast al elegir)
 // Al elegir uno, cambia el modelo de la sesión abierta (POST /session/{id}/model).
 // Widget en el footer: precio del modelo actualmente seleccionado.
 //
@@ -20,6 +21,9 @@ const money = (n: unknown): string => {
   if (x >= 10) return `$${x.toFixed(1)}`
   return `$${x.toFixed(2)}`
 }
+
+// money() sin el "$" (se obvia porque el score ya lo lleva)
+const plain = (n: unknown): string => money(n).replace("$", "")
 
 const tokens = (n: number): string => {
   if (!Number.isFinite(n)) return "?"
@@ -47,14 +51,60 @@ const pickCost = (m: ModelInfo): Cost | undefined => {
   return fits.length > 0 ? fits[fits.length - 1] : ordered[0]
 }
 
+// ---------- costo efectivo: mezcla ponderada según uso real de agente ----------
+// perfil: ~10:1 tokens de entrada vs salida; ~70% de la entrada llega cacheada
+const W_CACHE_READ = 0.636
+const W_INPUT = 0.273
+const W_OUTPUT = 0.091
+const SESSION_MTOK = 0.11 // sesión típica ≈110k tokens → $/sesión = score × 0.11
+
+// null = el catálogo no trae precios
+const score = (m: ModelInfo): number | null => {
+  const c = pickCost(m)
+  if (!c) return null
+  return W_CACHE_READ * c.cache.read + W_INPUT * c.input + W_OUTPUT * c.output
+}
+
+// nivel de precio para agrupar en el selector
+const tier = (s: number | null): string => {
+  if (s === null) return "Sin precios"
+  if (s === 0) return "GRATIS"
+  if (s < 1) return "Económico"
+  if (s <= 3.5) return "Medio"
+  return "Caro"
+}
+
+// orden por score: sin precios al final
+const byScore = (a: { s: number | null }, b: { s: number | null }): number => {
+  if (a.s === null) return b.s === null ? 0 : 1
+  if (b.s === null) return -1
+  return a.s - b.s
+}
+
+// versión corta para las filas del selector: solo el score (la descripción se corta)
+const pricedRow = (m: ModelInfo): string => {
+  const s = score(m)
+  if (s === null) return "sin precios"
+  if (s === 0) return "GRATIS"
+  return `≈${money(s)}/Mtok · ≈${money(s * SESSION_MTOK)}/ses`
+}
+
+// versión completa: se usa en los toasts al elegir un modelo
 const priced = (m: ModelInfo): string => {
   const parts: string[] = []
   const c = pickCost(m)
-  if (c) {
-    if (c.input === 0 && c.output === 0 && c.cache.read === 0 && c.cache.write === 0) {
+  const s = score(m)
+  if (c && s !== null) {
+    if (s === 0) {
       parts.push("GRATIS")
     } else {
-      parts.push(`in ${money(c.input)}`, `out ${money(c.output)}`, `cache ${money(c.cache.read)}/${money(c.cache.write)}`)
+      parts.push(
+        `≈${money(s)}/Mtok`,
+        `≈${money(s * SESSION_MTOK)}/sesión`,
+        `in ${plain(c.input)}`,
+        `out ${plain(c.output)}`,
+        `cch ${plain(c.cache.read)}/${plain(c.cache.write)}`,
+      )
     }
   } else {
     parts.push("sin precios")
@@ -74,10 +124,6 @@ export default Plugin.define({
       return list.filter((m) => m.enabled !== false)
     }
 
-    // nombre bonito del provider para agrupar
-    const providerName = (providerID: string, fallback: Map<string, string>): string =>
-      fallback.get(providerID) ?? providerID
-
     // ---------- comando /tcolas ----------
     const openPicker = async () => {
       const models = await loadModels()
@@ -86,29 +132,65 @@ export default Plugin.define({
         return
       }
 
-      await context.data.location.provider.sync(location).catch(() => {})
-      const providers = new Map<string, string>(
-        (context.data.location.provider.list(location) ?? []).map((p: any) => [p.id, p.name ?? p.id]),
-      )
-
       const current = context.ui.model.current()
       const currentValue = current ? `${current.providerID}/${current.modelID}` : undefined
 
-      const options = models.map((m) => {
-        const key = `${m.providerID}/${m.id}`
+      // ordenar por costo efectivo: económico arriba, caro abajo, sin precios al final
+      const ranked = models.map((m) => ({ m, s: score(m) })).sort(byScore)
+      const rankOf = new Map<string, number>()
+      ranked.forEach((r, i) => rankOf.set(`${r.m.providerID}/${r.m.id}`, i + 1))
+
+      // el proveedor solo se muestra si hay dos modelos con el mismo nombre (ahorra ancho)
+      const dup = new Map<string, number>()
+      ranked.forEach(({ m }) => dup.set(m.name || m.id, (dup.get(m.name || m.id) ?? 0) + 1))
+
+      const options = ranked.map(({ m, s }) => {
+        const base = m.name || m.id
         return {
-          title: m.name || m.id,
-          value: key,
-          description: priced(m),
-          category: providerName(m.providerID, providers),
+          title: (dup.get(base) ?? 0) > 1 ? `${base} [${m.providerID}]` : base,
+          value: `${m.providerID}/${m.id}`,
+          description: pricedRow(m),
+          category: tier(s),
         }
       })
 
+      // valor -> costo efectivo, para poder reordenar los resultados de búsqueda
+      const scoreOf = new Map<string, number | null>(
+        ranked.map(({ m, s }) => [`${m.providerID}/${m.id}`, s] as [string, number | null]),
+      )
+
+      const hasCost = (x: number | null | undefined): x is number => x !== null && x !== undefined
+      const byCost = (a: { value: string }, b: { value: string }): number => {
+        const x = scoreOf.get(a.value)
+        const y = scoreOf.get(b.value)
+        if (!hasCost(x)) return !hasCost(y) ? 0 : 1
+        if (!hasCost(y)) return -1
+        return x - y
+      }
+
+      // búsqueda propia: todas las palabras deben coincidir en título/descripción/categoría
+      // y el resultado SIEMPRE se reordena por costo efectivo (más barato arriba)
+      const search = (
+        query: string,
+        opts: { title: string; value: string; description?: string; category?: string }[],
+      ) => {
+        const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
+        const matched =
+          words.length === 0
+            ? [...opts]
+            : opts.filter((o) => {
+                const hay = `${o.title} ${o.description ?? ""} ${o.category ?? ""}`.toLowerCase()
+                return words.every((w) => hay.includes(w))
+              })
+        return matched.sort(byCost)
+      }
+
       const chosen: string | undefined = await context.ui.dialog.select({
-        title: "Cambiar modelo — in/out/cache read/write por Mtok",
+        title: "Modelos por costo — de más barato a más caro",
         placeholder: "Buscar modelo...",
         current: currentValue,
         options,
+        search,
       })
       if (!chosen) return // Esc: nada
 
@@ -116,6 +198,7 @@ export default Plugin.define({
       const id = rest.join("/")
       const target = models.find((m) => m.providerID === providerID && m.id === id)
       if (!target) return
+      const rank = rankOf.get(`${providerID}/${id}`) ?? 0
 
       // hay sesión abierta? router actual
       const route = context.ui.router.current()
@@ -124,7 +207,7 @@ export default Plugin.define({
       if (!sessionID) {
         context.ui.toast.show({
           title: "Model cost",
-          message: `Precios de ${target.name}: ${priced(target)}. Abre/enfoca una sesión para aplicarlo con /tcolas.`,
+          message: `Precios de ${target.name}: ${priced(target)} (puesto ${rank} de ${models.length}). Abre/enfoca una sesión para aplicarlo con /tcolas.`,
           variant: "info",
           duration: 5000,
         })
@@ -141,7 +224,7 @@ export default Plugin.define({
         })
         context.ui.toast.show({
           title: "Modelo cambiado",
-          message: `${target.name} — ${priced(target)}`,
+          message: `${target.name} — ${priced(target)} (puesto ${rank} de ${models.length} por precio)`,
           variant: "success",
           duration: 4000,
         })
@@ -160,8 +243,8 @@ export default Plugin.define({
       commands: [
         {
           id: "modelcost.switch",
-          title: "Cambiar modelo (con precios in/out/cache)",
-          description: "Como /model, pero muestra cuánto cuesta cada modelo",
+          title: "Cambiar modelo (ordenado por costo efectivo)",
+          description: "Como /model, ordenado de más económico a más caro con ≈$/Mtok",
           group: "Model cost",
           palette: true,
           suggested: true,
@@ -178,10 +261,10 @@ export default Plugin.define({
       const list = context.data.location.model.list(location) as ModelInfo[] | undefined
       const m = (list ?? []).find((x) => x.providerID === ref.providerID && x.id === ref.modelID)
       if (!m) return ""
-      const c = pickCost(m)
-      if (!c) return ""
-      if (c.input === 0 && c.output === 0) return "GRATIS"
-      return `⚡ ${money(c.input)} in / ${money(c.output)} out`
+      const s = score(m)
+      if (s === null) return ""
+      if (s === 0) return "GRATIS"
+      return `⚡ ≈${money(s)}/Mtok`
     }
 
     const widgets = [
