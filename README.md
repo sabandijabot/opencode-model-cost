@@ -37,6 +37,12 @@ al elegir):
 actualmente seleccionado, visible de forma permanente en `home` y `prompt`.
 Modelos gratis se muestran como `GRATIS`.
 
+<img width="1096" height="613" alt="image" src="https://github.com/user-attachments/assets/d74bbf96-cb4e-4aad-8e09-d56622c5f99f" />
+
+<img width="1097" height="611" alt="image" src="https://github.com/user-attachments/assets/31cda7d2-833c-4a5a-b144-77bf8a074df7" />
+
+
+
 ## Instalación
 
 Copia la carpeta a tu config global de OpenCode y registra el plugin:
