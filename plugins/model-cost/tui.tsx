@@ -89,6 +89,11 @@ const pricedRow = (m: ModelInfo): string => {
   return `≈${money(s)}/Mtok · ≈${money(s * SESSION_MTOK)}/ses`
 }
 
+// el catálogo (parte servidor del plugin) etiqueta los nombres con "· ≈$/Mtok";
+// aquí lo quitamos para no duplicar el precio en el título (sobra en la descripción)
+const UNTAG = / · (?:gratis|≈\$\d+(?:\.\d+)?\/Mtok)$/
+const baseName = (m: ModelInfo): string => (m.name || m.id).replace(UNTAG, "")
+
 // versión completa: se usa en los toasts al elegir un modelo
 const priced = (m: ModelInfo): string => {
   const parts: string[] = []
@@ -142,10 +147,10 @@ export default Plugin.define({
 
       // el proveedor solo se muestra si hay dos modelos con el mismo nombre (ahorra ancho)
       const dup = new Map<string, number>()
-      ranked.forEach(({ m }) => dup.set(m.name || m.id, (dup.get(m.name || m.id) ?? 0) + 1))
+      ranked.forEach(({ m }) => dup.set(baseName(m), (dup.get(baseName(m)) ?? 0) + 1))
 
       const options = ranked.map(({ m, s }) => {
-        const base = m.name || m.id
+        const base = baseName(m)
         return {
           title: (dup.get(base) ?? 0) > 1 ? `${base} [${m.providerID}]` : base,
           value: `${m.providerID}/${m.id}`,
@@ -207,7 +212,7 @@ export default Plugin.define({
       if (!sessionID) {
         context.ui.toast.show({
           title: "Model cost",
-          message: `Precios de ${target.name}: ${priced(target)} (puesto ${rank} de ${models.length}). Abre/enfoca una sesión para aplicarlo con /tcolas.`,
+          message: `Precios de ${baseName(target)}: ${priced(target)} (puesto ${rank} de ${models.length}). Abre/enfoca una sesión para aplicarlo con /tcolas.`,
           variant: "info",
           duration: 5000,
         })
@@ -224,7 +229,7 @@ export default Plugin.define({
         })
         context.ui.toast.show({
           title: "Modelo cambiado",
-          message: `${target.name} — ${priced(target)} (puesto ${rank} de ${models.length} por precio)`,
+          message: `${baseName(target)} — ${priced(target)} (puesto ${rank} de ${models.length} por precio)`,
           variant: "success",
           duration: 4000,
         })

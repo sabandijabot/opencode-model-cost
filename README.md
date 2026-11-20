@@ -2,7 +2,9 @@
 
 Selector de modelos para OpenCode V2 que **muestra cuánto cuesta cada modelo
 y los ordena de más barato a más caro**. Como el selector `/model` nativo, pero
-con los precios visibles para no gastar de más por accidente.
+con los precios visibles para no gastar de más por accidente. En clientes sin
+terminal (modo chat de Orca, Desktop) los precios van **incrustados en el nombre
+del modelo** desde la parte servidor del plugin.
 
 ## Qué hace
 
@@ -37,6 +39,25 @@ al elegir):
 actualmente seleccionado, visible de forma permanente en `home` y `prompt`.
 Modelos gratis se muestran como `GRATIS`.
 
+**Precios en el nombre del modelo (parte servidor)**: los clientes que no son
+la terminal de OpenCode —el modo chat de Orca, OpenCode Desktop, cualquier
+frontend del SDK— dibujan su propio selector de modelos y no pueden llevar
+plugins visuales. Para ellos, `index.ts` reescribe el `name` del catálogo con
+el costo efectivo al final:
+
+```
+opencode/Big Pickle · gratis
+opencode/Claude Haiku 5.5 · ≈$0.40/Mtok
+opencode/Kimi K3 · ≈$2.37/Mtok
+```
+
+- Vale buscar `gratis` o `≈$` en esos selectores: el precio es parte del nombre.
+- El orden en esos dropdowns es alfabético (lo decide el cliente, solo ordena
+  por nombre); el orden estricto por precio es función de `/tcolas` en la terminal.
+- Config y sesiones referencian modelos por `providerID/modelID`, que no se
+  tocan: renombrar no rompe nada.
+- Si un modelo no tiene precios en el catálogo, su nombre queda intacto.
+
 <img width="1096" height="613" alt="image" src="https://github.com/user-attachments/assets/d74bbf96-cb4e-4aad-8e09-d56622c5f99f" />
 
 <img width="1097" height="611" alt="image" src="https://github.com/user-attachments/assets/31cda7d2-833c-4a5a-b144-77bf8a074df7" />
@@ -49,8 +70,8 @@ Copia la carpeta a tu config global de OpenCode y registra el plugin:
 
 ```text
 .config/opencode/plugins/model-cost/
-├── index.ts   (parte servidor: no-op, requerido por la estructura de plugins)
-└── tui.tsx    (comando /tcolas + widget de costo efectivo)
+├── index.ts   (parte servidor: agrega ≈$/Mtok o "gratis" al nombre de cada modelo)
+└── tui.tsx    (comando /tcolas + widget de costo efectivo en la terminal)
 ```
 
 ```jsonc title="~/.config/opencode/opencode.jsonc"
@@ -73,4 +94,4 @@ avisa cuánto llevas gastado en el día.
 
 https://github.com/sabandijabot/opencode-daily-budget
 
-Configurado y probado con OpenCode **v2.2.5**.
+Configurado y probado con OpenCode **v2.3.2**.
